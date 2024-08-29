@@ -1,0 +1,86 @@
+diff --git a/src/ls.c b/src/ls.c
+index 6299f817f..0b668173c 100644
+--- a/src/ls.c
++++ b/src/ls.c
+@@ -114,6 +114,7 @@
+ #include "c-ctype.h"
+ #include "canonicalize.h"
+ #include "statx.h"
++#include <iconv.h>
+ 
+ /* Include <sys/capability.h> last to avoid a clash of <sys/types.h>
+    include guards with some premature versions of libcap.
+@@ -1640,6 +1641,10 @@ signal_restore (void)
+   signal_setup (false);
+ }
+ 
++iconv_t iconv_alloc_descriptor;
++char outbuf[LONGEST_HUMAN_READABLE+1];
++int32_t nfd_to_nfc(const char * s);
++
+ int
+ main (int argc, char **argv)
+ {
+@@ -1659,6 +1664,12 @@ main (int argc, char **argv)
+   static_assert (ARRAY_CARDINALITY (color_indicator) + 1
+                  == ARRAY_CARDINALITY (indicator_name));
+ 
++  iconv_alloc_descriptor = iconv_open ("utf8", "utf-8-mac");
++  if ( UNLIKELY(iconv_alloc_descriptor == (iconv_t) -1) ) {
++      printf("iconv initialization error\n");
++      return -1;
++  }
++
+   exit_status = EXIT_SUCCESS;
+   print_dir_name = true;
+   pending_dirs = nullptr;
+@@ -3040,7 +3051,11 @@ print_dir (char const *name, char const *realname, bool command_line_arg)
+             file_failure (command_line_arg,
+                           _("error canonicalizing %s"), name);
+         }
+-      quote_name (realname ? realname : name, dirname_quoting_options, -1,
++      char *n = realname ? realname : name;
++      if ( nfd_to_nfc(realname ? realname : name) ) {
++          n = outbuf;
++      }
++      quote_name (outbuf, dirname_quoting_options, -1,
+                   nullptr, true, &subdired_obstack, absolute_name);
+ 
+       free (absolute_name);
+@@ -4814,6 +4829,26 @@ quote_name (char const *name, struct quoting_options const *options,
+   return len + pad;
+ }
+ 
++int32_t nfd_to_nfc(const char * s)
++{
++  char inbuf[LONGEST_HUMAN_READABLE+1];
++  char * inbufp = (char *)inbuf;
++  strcpy(inbufp, s);
++
++  char * outbufp = (char *)outbuf;
++  size_t outremain = LONGEST_HUMAN_READABLE;
++  size_t inlen = strlen(inbufp);
++
++  if ( iconv (iconv_alloc_descriptor, &inbufp, &inlen, &outbufp,
++              &outremain) == (size_t) -1 ) {
++      return 0;
++  }
++
++  size_t outlen = LONGEST_HUMAN_READABLE - outremain;
++  outbuf[outlen] = '\0';
++  return outlen;
++}
++
+ static size_t
+ print_name_with_quoting (const struct fileinfo *f,
+                          bool symlink_target,
+@@ -4821,6 +4856,9 @@ print_name_with_quoting (const struct fileinfo *f,
+                          size_t start_col)
+ {
+   char const *name = symlink_target ? f->linkname : f->name;
++  if ( nfd_to_nfc(name) ) {
++      name = outbuf;
++  }
+ 
+   const struct bin_str *color
+     = print_with_color ? get_color_indicator (f, symlink_target) : nullptr;
